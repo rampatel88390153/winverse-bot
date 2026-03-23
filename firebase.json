@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "winverse-bot",
+  "private_key_id": "dd0744d601e01a51f07271384626c4d1d9aa0945",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC3hTXq8vtTBGSM\naP0kTdXNmDWre/pcl+N03F+S0oRlhTpnhZWvw2eEAfZRjAS+ll9zmulcKBQwdnfw\nL+Iv/LbidznZoElCGnLLnmh4t1RtxLv3CNQAPz8xI+mPxFufMpnFzflzZR+N1+8S\nITugv+S1BNQrXN3Ruaw/dgQ3zvklMMC3IZRCVB58BPd6qvzcYQ5956CbW0rmw/4D\nWOp5MdQ2Ql7wD0tLXiSMLevutrm4tec+GPE2WHwbaDdw6atcn0Yos8plim7NQedu\nTr2zhOREqKjX3kRMBYjiiHSjXbf1Rq9Qadj6HqgC9IrVOc0jLda8PpBDOvA1ErW8\nxcHC6RUZAgMBAAECggEAG9qpG1bz1F7XUARjX448xC60/qkbj9Ax4rvL+cHf/HSj\nL7EzzfCPlpahpzDkS3URWb+KacVfgxeIDrmF0BjAPVExQ5mzZMgU4ljRrHjO5LY2\nfUEmxD7VPYUg3wRDj78jXcVsdhpEFshObecDYNufP+ZSuZ4nwLw4q40jCMFuSTmC\nDN6jyiSkaGB7DIzZHSGOCqgowg4a0i9l2RO/G+hIWs5nfgh/aPLL6EzpyyHgVnOr\nbBLK0JSM9V+n/QFyLnHZoxvWLtPfcykqk6O5+Ka7PxH+oCnbekLH46b8ilWzRr49\nPPjwfgKiGGiZ5tcTqgMpM5QlQ/ZEM+So6hDFQJt4zQKBgQDsHZ7HC4A9nMSwDRDd\n7iZYPw9zksY7E6uJvecwjOwy/2gseDAyl6KkqCZPzatpnWsC78tewn2g15WmSADj\n2TFjL09E7q6WW0ugcC/XyI1wRPECIlHzoMpRGvdtybYQGHZ2av7RvuW8SlsOw3WH\niJRggv321FzcF42od30e2/vZewKBgQDG+bIjvtvyCark217VMkJZ5dfA4jZ71TNF\nSkRzfcaJYUxA0WIIKva/nJB5QUznJSY/FbQBftxV2XAq3cYHx65ucNlOPhvLFkyA\nQtrV2T3sCeCHR+yhRbHOr8oNvULu9fhlsqK1ubaqh5rxkgmXwJCuITs5dZItfL96\nei4eogmVewKBgEuDraQ7KWiLGtyzURGpeNoAURDFgGCkidgjxCzi5SfqR4bxaXjE\nxl+i553eSVQd5Hur9X749PTb/iCQJri4XfM6zj9dlri/uhA10RdSLOobInlsQImK\ngyotVbTnLjM3n6t/zL+ILjFqFnVCTfRq2gmD23V1tb0uSz/19y5HbOTBAoGBAKHd\niz9tCnxRxQY8N190bWm4gtXUsMH4ZKcfjaPuU856qo+oRfmjCexCr30U1DzNidmU\nDEWTMCdepdMZavn1RT9u6jiuaenCkCVfPart+WPFfTRQHH3ttoIPm22l44eF7ba9\npYP0OldrzW5rgQZEju449nb94BbE/vfh4Rbmdql1AoGBAKJj/3uFMknXJOH84YR0\nkHz1EL97h8o8Nk0nN5grlddI0douFAcu2lB9JYmtrmMsYs0MTpDDCA0ZMVUMKgLK\ngEMLXOjlELSt/PGABIyekf/SsWH25ZH/S6wovc4RtczLz5kJcxyjCT54M0uM91Ce\nsR51eajaIecjTyHIy3tsLw6T\n-----END PRIVATE KEY-----\n",
+  "client_email": "firebase-adminsdk-fbsvc@winverse-bot.iam.gserviceaccount.com",
+  "client_id": "110094396245074730664",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40winverse-bot.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
