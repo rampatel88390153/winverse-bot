@@ -2,7 +2,6 @@ import telebot
 import firebase_admin
 from firebase_admin import credentials, db
 from datetime import datetime
-import json
 import time
 
 BOT_TOKEN = "8239650192:AAEia0wuR4G6ai-iJQzpc64mBSwjTCkLMzA"
@@ -10,19 +9,13 @@ ADMIN_ID = "7144593342"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ================= FIREBASE DIRECT SETUP =================
+# ================= FIREBASE =================
 firebase_config = {
   "type": "service_account",
   "project_id": "winverse-bot",
   "private_key_id": "dd0744d601e01a51f07271384626c4d1d9aa0945",
   "private_key": """-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC3hTXq8vtTBGSM
-aP0kTdXNmDWre/pcl+N03F+S0oRlhTpnhZWvw2eEAfZRjAS+ll9zmulcKBQwdnfw
-L+Iv/LbidznZoElCGnLLnmh4t1RtxLv3CNQAPz8xI+mPxFufMpnFzflzZR+N1+8S
-ITugv+S1BNQrXN3Ruaw/dgQ3zvklMMC3IZRCVB58BPd6qvzcYQ5956CbW0rmw/4D
-WOp5MdQ2Ql7wD0tLXiSMLevutrm4tec+GPE2WHwbaDdw6atcn0Yos8plim7NQedu
-Tr2zhOREqKjX3kRMBYjiiHSjXbf1Rq9Qadj6HqgC9IrVOc0jLda8PpBDOvA1ErW8
-xcHC6RUZAgMBAAECggEAG9qpG1bz1F7XUARjX448xC60/qkbj9Ax4rvL+cHf/HSj
+YOUR_PRIVATE_KEY_HERE
 -----END PRIVATE KEY-----"""
 }
 
@@ -55,11 +48,12 @@ def get_user(user_id):
     except:
         return {"balance": 0, "referrals": 0, "ref_by": "", "last_bonus": ""}
 
+# ✅ FIXED (update → set)
 def update_user(user_id, data):
     try:
-        db.reference(f'users/{user_id}').update(data)
-    except:
-        pass
+        db.reference(f'users/{user_id}').set(data)
+    except Exception as e:
+        print("Update error:", e)
 
 # ================= START =================
 @bot.message_handler(commands=['start'])
@@ -69,6 +63,7 @@ def start(message):
         args = message.text.split()
         user = get_user(user_id)
 
+        # Referral
         if len(args) > 1 and user["ref_by"] == "":
             ref_id = args[1]
 
@@ -107,20 +102,23 @@ def bonus(message):
 
     today = str(datetime.now().date())
 
-    if user["last_bonus"] == today:
-        bot.send_message(user_id, "❌ Already claimed")
+    # ✅ FIX repeat bonus
+    if user.get("last_bonus") == today:
+        bot.send_message(user_id, "❌ Already claimed today")
         return
 
     user["balance"] += 5
     user["last_bonus"] = today
     update_user(user_id, user)
 
+    # referral earning
     if user["ref_by"]:
         ref_user = get_user(user["ref_by"])
         ref_user["balance"] += 1
         update_user(user["ref_by"], ref_user)
 
-    bot.send_message(user_id, "✅ ₹5 Added")
+    # ✅ show updated balance
+    bot.send_message(user_id, f"✅ ₹5 Added\n💰 New Balance: ₹{user['balance']}")
 
 # ================= REFERRAL =================
 @bot.message_handler(func=lambda m: m.text == "👥 Referral")
@@ -142,19 +140,20 @@ def tasks(message):
         tasks = db.reference("tasks").get()
 
         if not tasks:
-            bot.send_message(user_id, "No tasks")
+            bot.send_message(user_id, "❌ No tasks available")
             return
 
         text = "📋 Tasks:\n\n"
         for tid, t in tasks.items():
             done = db.reference(f"completed/{user_id}/{tid}").get()
 
-            status = "✅" if done else f"₹{t['reward']}"
+            status = "✅ Done" if done else f"₹{t['reward']}"
             text += f"{tid[:5]} → {t['text']} ({status})\n"
 
         bot.send_message(user_id, text)
 
-    except:
+    except Exception as e:
+        print("Task error:", e)
         bot.send_message(message.chat.id, "Error loading tasks")
 
 # ================= COMPLETE TASK =================
@@ -165,13 +164,13 @@ def done(message):
         tid = message.text.split()[1]
 
         if db.reference(f"completed/{user_id}/{tid}").get():
-            bot.send_message(user_id, "❌ Already done")
+            bot.send_message(user_id, "❌ Already completed")
             return
 
         task = db.reference(f"tasks/{tid}").get()
 
         if not task:
-            bot.send_message(user_id, "Invalid ID")
+            bot.send_message(user_id, "❌ Invalid Task ID")
             return
 
         user = get_user(user_id)
@@ -185,7 +184,7 @@ def done(message):
             ref_user["balance"] += int(task["reward"] * 0.25)
             update_user(user["ref_by"], ref_user)
 
-        bot.send_message(user_id, "✅ Reward added")
+        bot.send_message(user_id, f"✅ ₹{task['reward']} added\n💰 Balance: ₹{user['balance']}")
 
     except:
         bot.send_message(message.chat.id, "Use: /done TASK_ID")
@@ -211,7 +210,7 @@ def process_withdraw(message):
         user = get_user(user_id)
 
         if amount > user["balance"]:
-            bot.send_message(user_id, "Not enough balance")
+            bot.send_message(user_id, "❌ Not enough balance")
             return
 
         db.reference("withdraw").push({
@@ -220,14 +219,14 @@ def process_withdraw(message):
             "status": "pending"
         })
 
-        bot.send_message(user_id, "✅ Request sent")
+        bot.send_message(user_id, "✅ Request sent to admin")
 
-        bot.send_message(ADMIN_ID, f"💸 Withdraw\nUser: {user_id}\n₹{amount}")
+        bot.send_message(ADMIN_ID, f"💸 Withdraw Request\nUser: {user_id}\nAmount: ₹{amount}")
 
     except:
-        bot.send_message(message.chat.id, "Invalid")
+        bot.send_message(message.chat.id, "❌ Invalid amount")
 
-# ================= ADMIN TASK =================
+# ================= ADMIN =================
 @bot.message_handler(commands=['addtask'])
 def addtask(message):
     if str(message.chat.id) != ADMIN_ID:
@@ -240,7 +239,7 @@ def addtask(message):
         "reward": 5
     })
 
-    bot.send_message(message.chat.id, "Task added")
+    bot.send_message(message.chat.id, "✅ Task added")
 
 # ================= RUN =================
 print("Bot Running 🚀")
