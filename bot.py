@@ -4,7 +4,7 @@ from firebase_admin import credentials, db
 from datetime import datetime
 import time
 
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN = "8239650192:AAEia0wuR4G6ai-iJQzpc64mBSwjTCkLMzA"
 ADMIN_ID = "7144593342"
 
 bot = telebot.TeleBot(BOT_TOKEN)
