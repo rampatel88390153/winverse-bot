@@ -19,32 +19,49 @@ YOUR_PRIVATE_KEY
 -----END PRIVATE KEY-----"""
 }
 
-if not firebase_admin._apps:
-    cred = credentials.Certificate(firebase_config)
-    firebase_admin.initialize_app(cred, {
-        "databaseURL": "https://winverse-bot-default-rtdb.firebaseio.com/"
-    })
-
-print("Firebase Connected ✅")
+try:
+    if not firebase_admin._apps:
+        cred = credentials.Certificate(firebase_config)
+        firebase_admin.initialize_app(cred, {
+            "databaseURL": "https://winverse-bot-default-rtdb.firebaseio.com/"
+        })
+    print("Firebase Connected ✅")
+except Exception as e:
+    print("Firebase Error:", e)
 
 # ================= USER =================
 def get_user(user_id):
-    ref = db.reference(f'users/{user_id}')
-    user = ref.get()
+    try:
+        ref = db.reference(f'users/{user_id}')
+        user = ref.get()
 
-    if user is None:
-        user = {
-            "balance": 10,  # signup bonus
-            "referrals": 0,
-            "ref_by": "",
-            "last_bonus": "0"
-        }
-        ref.set(user)
+        if user is None:
+            user = {
+                "balance": 10,
+                "referrals": 0,
+                "ref_by": "",
+                "last_bonus": "0"
+            }
+            ref.set(user)
 
-    return user
+        return user
+    except Exception as e:
+        print("Get user error:", e)
+        return {"balance": 0, "referrals": 0, "ref_by": "", "last_bonus": "0"}
 
 def update_user(user_id, data):
-    db.reference(f'users/{user_id}').update(data)
+    try:
+        db.reference(f'users/{user_id}').update(data)
+    except Exception as e:
+        print("Update error:", e)
+
+# ================= MENU =================
+def main_menu():
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("💰 Balance", "🎁 Daily Bonus")
+    markup.row("👥 Referral", "📋 Tasks")
+    markup.row("🏆 Leaderboard", "💸 Withdraw")
+    return markup
 
 # ================= START =================
 @bot.message_handler(commands=['start'])
@@ -55,7 +72,7 @@ def start(message):
 
         user = get_user(user_id)
 
-        # referral (only once)
+        # referral only once
         if len(args) > 1 and user["ref_by"] == "":
             ref_id = args[1]
 
@@ -72,12 +89,7 @@ def start(message):
                     "referrals": ref_user["referrals"] + 1
                 })
 
-        markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.row("💰 Balance", "🎁 Daily Bonus")
-        markup.row("👥 Referral", "📋 Tasks")
-        markup.row("🏆 Leaderboard", "💸 Withdraw")
-
-        bot.send_message(user_id, "👋 Welcome to Winverse Bot!", reply_markup=markup)
+        bot.send_message(user_id, "👋 Welcome to Winverse Bot!", reply_markup=main_menu())
 
     except Exception as e:
         print("Start Error:", e)
@@ -92,7 +104,7 @@ def balance(message):
         if user is None:
             user = get_user(user_id)
 
-        bot.send_message(user_id, f"💰 Balance: ₹{user.get('balance', 0)}")
+        bot.send_message(user_id, f"💰 Balance: ₹{user.get('balance',0)}")
 
     except Exception as e:
         print("Balance error:", e)
@@ -108,7 +120,6 @@ def bonus(message):
 
         today = datetime.now().strftime("%Y-%m-%d")
 
-        # ❌ already claimed
         if user.get("last_bonus") == today:
             bot.send_message(user_id, "❌ Already claimed today")
             return
@@ -177,89 +188,6 @@ def tasks(message):
     except Exception as e:
         print("Task error:", e)
         bot.send_message(message.chat.id, "❌ Error loading tasks")
-
-# ================= COMPLETE TASK =================
-@bot.message_handler(commands=['done'])
-def done(message):
-    try:
-        user_id = str(message.chat.id)
-        tid = message.text.split()[1]
-
-        if db.reference(f"completed/{user_id}/{tid}").get():
-            bot.send_message(user_id, "❌ Already completed")
-            return
-
-        task = db.reference(f"tasks/{tid}").get()
-
-        if not task:
-            bot.send_message(user_id, "❌ Invalid Task ID")
-            return
-
-        user = get_user(user_id)
-        reward = task.get("reward", 0)
-
-        new_balance = user["balance"] + reward
-
-        update_user(user_id, {"balance": new_balance})
-
-        db.reference(f"completed/{user_id}/{tid}").set(True)
-
-        # referral commission
-        if user["ref_by"]:
-            ref_user = get_user(user["ref_by"])
-            commission = int(reward * 0.25)
-
-            update_user(user["ref_by"], {
-                "balance": ref_user["balance"] + commission
-            })
-
-        bot.send_message(user_id, f"✅ ₹{reward} added\n💰 Balance: ₹{new_balance}")
-
-    except Exception as e:
-        print("Done error:", e)
-        bot.send_message(message.chat.id, "Use: /done TASK_ID")
-
-# ================= WITHDRAW =================
-@bot.message_handler(func=lambda m: m.text == "💸 Withdraw")
-def withdraw(message):
-    try:
-        user_id = str(message.chat.id)
-        user = get_user(user_id)
-
-        if user["balance"] < 20:
-            bot.send_message(user_id, "❌ Minimum ₹20 required")
-            return
-
-        msg = bot.send_message(user_id, "Enter amount:")
-        bot.register_next_step_handler(msg, process_withdraw)
-
-    except Exception as e:
-        print("Withdraw error:", e)
-
-def process_withdraw(message):
-    try:
-        user_id = str(message.chat.id)
-        amount = int(message.text)
-
-        user = get_user(user_id)
-
-        if amount > user["balance"]:
-            bot.send_message(user_id, "❌ Not enough balance")
-            return
-
-        db.reference("withdraw").push({
-            "user": user_id,
-            "amount": amount,
-            "status": "pending"
-        })
-
-        bot.send_message(user_id, "✅ Request sent")
-
-        bot.send_message(ADMIN_ID, f"💸 Withdraw\nUser: {user_id}\nAmount: ₹{amount}")
-
-    except Exception as e:
-        print("Withdraw error:", e)
-        bot.send_message(message.chat.id, "❌ Invalid amount")
 
 # ================= RUN =================
 print("Bot Running 🚀")
