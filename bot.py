@@ -13,9 +13,9 @@ bot = telebot.TeleBot(BOT_TOKEN)
 firebase_config = {
   "type": "service_account",
   "project_id": "winverse-bot",
-  "private_key_id": "dd0744d601e01a51f07271384626c4d1d9aa0945",
+  "private_key_id": "YOUR_KEY_ID",
   "private_key": """-----BEGIN PRIVATE KEY-----
-YOUR_PRIVATE_KEY_HERE
+YOUR_PRIVATE_KEY
 -----END PRIVATE KEY-----"""
 }
 
@@ -37,21 +37,22 @@ def get_user(user_id):
 
         if not user:
             user = {
-                "balance": 0,
+                "balance": 10,  # signup bonus
                 "referrals": 0,
                 "ref_by": "",
-                "last_bonus": ""
+                "last_bonus": "",
+                "created_at": str(datetime.now())
             }
             ref.set(user)
 
         return user
-    except:
+    except Exception as e:
+        print("Get user error:", e)
         return {"balance": 0, "referrals": 0, "ref_by": "", "last_bonus": ""}
 
-# ✅ FIXED (update → set)
 def update_user(user_id, data):
     try:
-        db.reference(f'users/{user_id}').set(data)
+        db.reference(f'users/{user_id}').update(data)  # ✅ FIXED
     except Exception as e:
         print("Update error:", e)
 
@@ -61,22 +62,25 @@ def start(message):
     try:
         user_id = str(message.chat.id)
         args = message.text.split()
+
         user = get_user(user_id)
 
-        # Referral
+        # referral (only once)
         if len(args) > 1 and user["ref_by"] == "":
             ref_id = args[1]
 
             if ref_id != user_id:
                 ref_user = get_user(ref_id)
 
-                user["balance"] += 10
-                user["ref_by"] = ref_id
+                update_user(user_id, {
+                    "balance": user["balance"] + 10,
+                    "ref_by": ref_id
+                })
 
-                ref_user["referrals"] += 1
-
-                update_user(ref_id, ref_user)
-                update_user(user_id, user)
+                update_user(ref_id, {
+                    "balance": ref_user["balance"] + 10,
+                    "referrals": ref_user["referrals"] + 1
+                })
 
         markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.row("💰 Balance", "🎁 Daily Bonus")
@@ -91,46 +95,65 @@ def start(message):
 # ================= BALANCE =================
 @bot.message_handler(func=lambda m: m.text == "💰 Balance")
 def balance(message):
-    user = get_user(str(message.chat.id))
-    bot.send_message(message.chat.id, f"💰 Balance: ₹{user['balance']}")
+    try:
+        user_id = str(message.chat.id)
+        user = db.reference(f'users/{user_id}').get()
 
-# ================= BONUS =================
+        if not user:
+            user = get_user(user_id)
+
+        bot.send_message(user_id, f"💰 Balance: ₹{user['balance']}")
+    except Exception as e:
+        print("Balance error:", e)
+
+# ================= DAILY BONUS =================
 @bot.message_handler(func=lambda m: m.text == "🎁 Daily Bonus")
 def bonus(message):
-    user_id = str(message.chat.id)
-    user = get_user(user_id)
+    try:
+        user_id = str(message.chat.id)
+        user = get_user(user_id)
 
-    today = str(datetime.now().date())
+        today = str(datetime.now().date())
 
-    # ✅ FIX repeat bonus
-    if user.get("last_bonus") == today:
-        bot.send_message(user_id, "❌ Already claimed today")
-        return
+        if user.get("last_bonus") == today:
+            bot.send_message(user_id, "❌ Already claimed today")
+            return
 
-    user["balance"] += 5
-    user["last_bonus"] = today
-    update_user(user_id, user)
+        new_balance = user["balance"] + 1
 
-    # referral earning
-    if user["ref_by"]:
-        ref_user = get_user(user["ref_by"])
-        ref_user["balance"] += 1
-        update_user(user["ref_by"], ref_user)
+        update_user(user_id, {
+            "balance": new_balance,
+            "last_bonus": today
+        })
 
-    # ✅ show updated balance
-    bot.send_message(user_id, f"✅ ₹5 Added\n💰 New Balance: ₹{user['balance']}")
+        # referral commission
+        if user["ref_by"]:
+            ref_user = get_user(user["ref_by"])
+            commission = int(1 * 0.25)
+
+            update_user(user["ref_by"], {
+                "balance": ref_user["balance"] + commission
+            })
+
+        bot.send_message(user_id, f"✅ ₹1 Added\n💰 Balance: ₹{new_balance}")
+
+    except Exception as e:
+        print("Bonus error:", e)
 
 # ================= REFERRAL =================
 @bot.message_handler(func=lambda m: m.text == "👥 Referral")
 def referral(message):
-    user_id = str(message.chat.id)
-    user = get_user(user_id)
+    try:
+        user_id = str(message.chat.id)
+        user = get_user(user_id)
 
-    link = f"https://t.me/{bot.get_me().username}?start={user_id}"
+        link = f"https://t.me/{bot.get_me().username}?start={user_id}"
 
-    bot.send_message(user_id,
-        f"🔗 Link:\n{link}\n👥 {user['referrals']}\n💰 25% lifetime earning"
-    )
+        bot.send_message(user_id,
+            f"🔗 Link:\n{link}\n👥 {user['referrals']}\n💰 25% lifetime earning"
+        )
+    except Exception as e:
+        print("Referral error:", e)
 
 # ================= TASKS =================
 @bot.message_handler(func=lambda m: m.text == "📋 Tasks")
@@ -144,17 +167,18 @@ def tasks(message):
             return
 
         text = "📋 Tasks:\n\n"
+
         for tid, t in tasks.items():
             done = db.reference(f"completed/{user_id}/{tid}").get()
 
-            status = "✅ Done" if done else f"₹{t['reward']}"
-            text += f"{tid[:5]} → {t['text']} ({status})\n"
+            status = "✅ Done" if done else f"₹{t.get('reward',0)}"
+            text += f"{tid[:5]} → {t.get('text','Task')} ({status})\n"
 
         bot.send_message(user_id, text)
 
     except Exception as e:
         print("Task error:", e)
-        bot.send_message(message.chat.id, "Error loading tasks")
+        bot.send_message(message.chat.id, "❌ Error loading tasks")
 
 # ================= COMPLETE TASK =================
 @bot.message_handler(commands=['done'])
@@ -174,33 +198,45 @@ def done(message):
             return
 
         user = get_user(user_id)
-        user["balance"] += task["reward"]
-        update_user(user_id, user)
+        reward = task.get("reward", 0)
+
+        new_balance = user["balance"] + reward
+
+        update_user(user_id, {"balance": new_balance})
 
         db.reference(f"completed/{user_id}/{tid}").set(True)
 
+        # referral commission
         if user["ref_by"]:
             ref_user = get_user(user["ref_by"])
-            ref_user["balance"] += int(task["reward"] * 0.25)
-            update_user(user["ref_by"], ref_user)
+            commission = int(reward * 0.25)
 
-        bot.send_message(user_id, f"✅ ₹{task['reward']} added\n💰 Balance: ₹{user['balance']}")
+            update_user(user["ref_by"], {
+                "balance": ref_user["balance"] + commission
+            })
 
-    except:
+        bot.send_message(user_id, f"✅ ₹{reward} added\n💰 Balance: ₹{new_balance}")
+
+    except Exception as e:
+        print("Done error:", e)
         bot.send_message(message.chat.id, "Use: /done TASK_ID")
 
 # ================= WITHDRAW =================
 @bot.message_handler(func=lambda m: m.text == "💸 Withdraw")
 def withdraw(message):
-    user_id = str(message.chat.id)
-    user = get_user(user_id)
+    try:
+        user_id = str(message.chat.id)
+        user = get_user(user_id)
 
-    if user["balance"] < 20:
-        bot.send_message(user_id, "❌ Minimum ₹20 required")
-        return
+        if user["balance"] < 20:
+            bot.send_message(user_id, "❌ Minimum ₹20 required")
+            return
 
-    msg = bot.send_message(user_id, "Enter amount:")
-    bot.register_next_step_handler(msg, process_withdraw)
+        msg = bot.send_message(user_id, "Enter amount:")
+        bot.register_next_step_handler(msg, process_withdraw)
+
+    except Exception as e:
+        print("Withdraw error:", e)
 
 def process_withdraw(message):
     try:
@@ -219,27 +255,13 @@ def process_withdraw(message):
             "status": "pending"
         })
 
-        bot.send_message(user_id, "✅ Request sent to admin")
+        bot.send_message(user_id, "✅ Request sent")
 
-        bot.send_message(ADMIN_ID, f"💸 Withdraw Request\nUser: {user_id}\nAmount: ₹{amount}")
+        bot.send_message(ADMIN_ID, f"💸 Withdraw\nUser: {user_id}\nAmount: ₹{amount}")
 
-    except:
+    except Exception as e:
+        print("Withdraw process error:", e)
         bot.send_message(message.chat.id, "❌ Invalid amount")
-
-# ================= ADMIN =================
-@bot.message_handler(commands=['addtask'])
-def addtask(message):
-    if str(message.chat.id) != ADMIN_ID:
-        return
-
-    text = message.text.replace("/addtask ", "")
-
-    db.reference("tasks").push({
-        "text": text,
-        "reward": 5
-    })
-
-    bot.send_message(message.chat.id, "✅ Task added")
 
 # ================= RUN =================
 print("Bot Running 🚀")
@@ -248,5 +270,5 @@ while True:
     try:
         bot.infinity_polling(timeout=60, long_polling_timeout=60)
     except Exception as e:
-        print("Error:", e)
+        print("Polling Error:", e)
         time.sleep(5)
