@@ -3,20 +3,26 @@ import firebase_admin
 from firebase_admin import credentials, db
 from datetime import datetime
 import time
+import os
 
-BOT_TOKEN = "8239650192:AAEia0wuR4G6ai-iJQzpc64mBSwjTCkLMzA"
-ADMIN_ID = "7144593342"
+# ================= TOKEN SAFE =================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# 👉 fallback (agar Railway variable nahi mila)
+if not BOT_TOKEN:
+    BOT_TOKEN = "8239650192:AAEia0wuR4G6ai-iJQzpc64mBSwjTCkLMzA"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ================= FIREBASE =================
+# ================= FIREBASE SAFE =================
 firebase_config = {
   "type": "service_account",
   "project_id": "winverse-bot",
-  "private_key_id": "YOUR_KEY_ID",
+  "private_key_id": "dd0744d601e01a51f07271384626c4d1d9aa0945",
   "private_key": """-----BEGIN PRIVATE KEY-----
 YOUR_PRIVATE_KEY
------END PRIVATE KEY-----"""
+-----END PRIVATE KEY-----""",
+  "client_email": "firebase-adminsdk-fbsvc@winverse-bot.iam.gserviceaccount.com"
 }
 
 try:
@@ -29,154 +35,119 @@ try:
 except Exception as e:
     print("Firebase Error:", e)
 
-# ================= AUTO CREATE TASK =================
+# ================= AUTO TASK =================
 def ensure_tasks():
-    ref = db.reference("tasks")
-    tasks = ref.get()
-
-    if not tasks:
-        ref.set({
-            "task1": {
-                "text": "Join Telegram Channel",
-                "reward": 5
-            }
-        })
-        print("Default Task Created ✅")
+    try:
+        ref = db.reference("tasks")
+        if not ref.get():
+            ref.set({
+                "task1": {"text": "Join Channel", "reward": 5}
+            })
+    except:
+        pass
 
 ensure_tasks()
 
 # ================= USER =================
-def get_user(user_id):
-    ref = db.reference(f'users/{user_id}')
-    user = ref.get()
+def get_user(uid):
+    try:
+        ref = db.reference(f'users/{uid}')
+        user = ref.get()
 
-    if user is None:
-        user = {
-            "balance": 10,
-            "referrals": 0,
-            "ref_by": "",
-            "last_bonus": "0"
-        }
-        ref.set(user)
+        if not user:
+            user = {
+                "balance": 10,
+                "referrals": 0,
+                "ref_by": "",
+                "last_bonus": "0"
+            }
+            ref.set(user)
 
-    return user
+        return user
+    except:
+        return {"balance": 0, "last_bonus": "0"}
 
-def update_user(user_id, data):
-    db.reference(f'users/{user_id}').update(data)
+def update_user(uid, data):
+    try:
+        db.reference(f'users/{uid}').update(data)
+    except:
+        pass
 
 # ================= MENU =================
 def menu():
-    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("💰 Balance", "🎁 Daily Bonus")
-    markup.row("👥 Referral", "📋 Tasks")
-    markup.row("🏆 Leaderboard", "💸 Withdraw")
-    return markup
+    m = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    m.row("💰 Balance", "🎁 Daily Bonus")
+    m.row("👥 Referral", "📋 Tasks")
+    return m
 
 # ================= START =================
 @bot.message_handler(commands=['start'])
-def start(message):
-    user_id = str(message.chat.id)
-    args = message.text.split()
-
-    user = get_user(user_id)
-
-    # referral (only once)
-    if len(args) > 1 and user["ref_by"] == "":
-        ref_id = args[1]
-
-        if ref_id != user_id:
-            ref_user = get_user(ref_id)
-
-            update_user(user_id, {
-                "balance": user["balance"] + 10,
-                "ref_by": ref_id
-            })
-
-            update_user(ref_id, {
-                "balance": ref_user["balance"] + 10,
-                "referrals": ref_user["referrals"] + 1
-            })
-
-    bot.send_message(user_id, "👋 Welcome to Winverse Bot!", reply_markup=menu())
+def start(msg):
+    uid = str(msg.chat.id)
+    get_user(uid)
+    bot.send_message(uid, "👋 Welcome to Winverse Bot!", reply_markup=menu())
 
 # ================= BALANCE =================
 @bot.message_handler(func=lambda m: m.text == "💰 Balance")
-def balance(message):
-    user_id = str(message.chat.id)
-    user = get_user(user_id)
+def bal(msg):
+    uid = str(msg.chat.id)
+    user = get_user(uid)
+    bot.send_message(uid, f"💰 Balance: ₹{user.get('balance',0)}")
 
-    bot.send_message(user_id, f"💰 Balance: ₹{user['balance']}")
-
-# ================= DAILY BONUS =================
+# ================= BONUS =================
 @bot.message_handler(func=lambda m: m.text == "🎁 Daily Bonus")
-def bonus(message):
-    user_id = str(message.chat.id)
+def bonus(msg):
+    try:
+        uid = str(msg.chat.id)
+        ref = db.reference(f'users/{uid}')
+        user = ref.get()
 
-    ref = db.reference(f'users/{user_id}')
-    user = ref.get()
+        today = datetime.now().strftime("%Y-%m-%d")
 
-    today = datetime.now().strftime("%Y-%m-%d")
+        if user.get("last_bonus") == today:
+            bot.send_message(uid, "❌ Already claimed today")
+            return
 
-    # ❌ already claimed
-    if user.get("last_bonus") == today:
-        bot.send_message(user_id, "❌ Already claimed today")
-        return
+        new_balance = user.get("balance", 0) + 1
 
-    new_balance = user["balance"] + 1
-
-    ref.update({
-        "balance": new_balance,
-        "last_bonus": today
-    })
-
-    # referral commission
-    if user.get("ref_by"):
-        ref_id = user["ref_by"]
-        ref_user = get_user(ref_id)
-
-        commission = int(1 * 0.25)
-
-        update_user(ref_id, {
-            "balance": ref_user["balance"] + commission
+        ref.update({
+            "balance": new_balance,
+            "last_bonus": today
         })
 
-    bot.send_message(user_id, f"✅ ₹1 Added\n💰 Balance: ₹{new_balance}")
+        bot.send_message(uid, f"✅ ₹1 Added\n💰 Balance: ₹{new_balance}")
 
-# ================= REFERRAL =================
-@bot.message_handler(func=lambda m: m.text == "👥 Referral")
-def referral(message):
-    user_id = str(message.chat.id)
-    user = get_user(user_id)
+    except Exception as e:
+        print("Bonus Error:", e)
+        bot.send_message(msg.chat.id, "❌ Error, try again")
 
-    link = f"https://t.me/{bot.get_me().username}?start={user_id}"
-
-    bot.send_message(user_id,
-        f"🔗 Link:\n{link}\n👥 {user['referrals']}\n💰 25% lifetime earning"
-    )
-
-# ================= TASKS =================
+# ================= TASK =================
 @bot.message_handler(func=lambda m: m.text == "📋 Tasks")
-def tasks(message):
-    user_id = str(message.chat.id)
+def task(msg):
+    try:
+        tasks = db.reference("tasks").get()
 
-    tasks = db.reference("tasks").get()
+        if not tasks:
+            bot.send_message(msg.chat.id, "❌ No tasks found")
+            return
 
-    text = "📋 Tasks:\n\n"
+        text = "📋 Tasks:\n\n"
 
-    for tid, t in tasks.items():
-        done = db.reference(f"completed/{user_id}/{tid}").get()
-        status = "✅ Done" if done else f"₹{t['reward']}"
+        for t in tasks:
+            text += f"{t} - ₹{tasks[t]['reward']}\n"
 
-        text += f"{tid} → {t['text']} ({status})\n"
+        bot.send_message(msg.chat.id, text)
 
-    bot.send_message(user_id, text)
+    except Exception as e:
+        print("Task Error:", e)
+        bot.send_message(msg.chat.id, "❌ Error loading tasks")
 
-# ================= SAFE RUN =================
+# ================= RUN =================
 print("Bot Running 🚀")
 
 while True:
     try:
         bot.infinity_polling(timeout=60, long_polling_timeout=60)
     except Exception as e:
-        print("Bot Restarting:", e)
+        print("Restarting Bot:", e)
         time.sleep(5)
