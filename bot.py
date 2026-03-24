@@ -1,445 +1,312 @@
-import asyncio
 import logging
 import sqlite3
-import hashlib
 from datetime import datetime
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-BOT_TOKEN = "8239650192:AAEia0wuR4G6ai-iJQzpc64mBSwjTCkLMzA"
-ADMIN_ID = 7144593342
+# Bot token (provided)
+BOT_TOKEN = "8239650192:AAEia0wu"
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Admin ID (change to your Telegram user ID)
+ADMIN_ID = 123456789  # Replace with your actual Telegram ID
 
+# Database setup
 def init_db():
-    conn = sqlite3.connect('winverse_earn.db', check_same_thread=False)
-    cursor = conn.cursor()
-    
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, 
-        referral_code TEXT UNIQUE, referred_by INTEGER, balance REAL DEFAULT 0,
-        total_earned REAL DEFAULT 0, signup_bonus INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    
-    cursor.execute('''CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, task_text TEXT, reward REAL DEFAULT 2,
-        completed_by INTEGER, completed_at TIMESTAMP, is_active INTEGER DEFAULT 1)''')
-    
-    cursor.execute('''CREATE TABLE IF NOT EXISTS withdrawals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount REAL,
-        charge REAL DEFAULT 2, final_amount REAL, upi_id TEXT,
-        status TEXT DEFAULT 'pending', requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    
-    cursor.execute('''CREATE TABLE IF NOT EXISTS task_completions (
-        user_id INTEGER, task_id INTEGER, PRIMARY KEY(user_id, task_id))''')
-    
-    # Default Task ₹2
-    cursor.execute("SELECT COUNT(*) FROM tasks WHERE is_active=1")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO tasks (task_text, reward, is_active) VALUES (?, 2, 1)", 
-                      ("🎯 Task 1: Winverse join confirmation - Complete karo!",))
-    
+    conn = sqlite3.connect('earn_bot.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        balance REAL DEFAULT 0,
+        tasks_done INTEGER DEFAULT 0,
+        referrals INTEGER DEFAULT 0,
+        referred_by INTEGER DEFAULT 0,
+        withdraw_requests INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        referrer_id INTEGER,
+        referred_id INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS withdraws (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        amount REAL,
+        upi TEXT,
+        status TEXT DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
     conn.commit()
     conn.close()
 
+# Get user data
 def get_user(user_id):
-    conn = sqlite3.connect('winverse_earn.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
-    user = cursor.fetchone()
+    conn = sqlite3.connect('earn_bot.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+    user = c.fetchone()
     conn.close()
     return user
 
-def create_user(user_id, username, first_name, referred_by=None):
-    conn = sqlite3.connect('winverse_earn.db')
-    cursor = conn.cursor()
-    ref_code = hashlib.md5(f"{user_id}".encode()).hexdigest()[:8].upper()
-    
-    cursor.execute('''INSERT OR IGNORE INTO users 
-                     (user_id,username,first_name,referral_code,referred_by) 
-                     VALUES(?,?,?,?,?)''', (user_id,username,first_name,ref_code,referred_by))
-    conn.commit()
-    conn.close()
-    
-    # Signup bonus ₹10 (once)
+# Update or create user
+def update_user(user_id, username='', **kwargs):
+    conn = sqlite3.connect('earn_bot.db', check_same_thread=False)
+    c = conn.cursor()
     user = get_user(user_id)
-    if user and user[7] == 0:
-        conn = sqlite3.connect('winverse_earn.db')
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET signup_bonus=1, balance=balance+10, total_earned=total_earned+10 WHERE user_id=?", (user_id,))
-        conn.commit()
-        conn.close()
-    
-    # Referral bonus ₹10
-    if referred_by:
-        conn = sqlite3.connect('winverse_earn.db')
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET balance=balance+10, total_earned=total_earned+10 WHERE user_id=?", (referred_by,))
-        conn.commit()
-        conn.close()
-
-def get_active_task():
-    conn = sqlite3.connect('winverse_earn.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM tasks WHERE is_active=1 LIMIT 1")
-    task = cursor.fetchone()
-    conn.close()
-    return task
-
-def complete_task(user_id, task_id):
-    conn = sqlite3.connect('winverse_earn.db')
-    cursor = conn.cursor()
-    
-    # Check already completed
-    cursor.execute("SELECT 1 FROM task_completions WHERE user_id=? AND task_id=?", (user_id, task_id))
-    if cursor.fetchone(): 
-        conn.close()
-        return False
-    
-    cursor.execute("SELECT reward FROM tasks WHERE id=?", (task_id,))
-    reward = cursor.fetchone()[0]  # ₹2 default
-    
-    # Add reward
-    cursor.execute("UPDATE users SET balance=balance+?, total_earned=total_earned+? WHERE user_id=?", (reward, reward, user_id))
-    cursor.execute("INSERT INTO task_completions(user_id,task_id) VALUES(?,?)", (user_id, task_id))
-    cursor.execute("UPDATE tasks SET is_active=0, completed_by=?, completed_at=CURRENT_TIMESTAMP WHERE id=?", (user_id, task_id))
-    
+    if not user:
+        c.execute('INSERT INTO users (user_id, username) VALUES (?, ?)', (user_id, username))
+    for key, value in kwargs.items():
+        c.execute(f'UPDATE users SET {key} = ? WHERE user_id = ?', (value, user_id))
     conn.commit()
     conn.close()
-    return True
 
-# APP LIKE MAIN MENU
-def main_menu():
-    keyboard = [
-        [InlineKeyboardButton("📋 TASKS", callback_data="tasks")],
-        [InlineKeyboardButton("💰 BALANCE", callback_data="balance")],
-        [InlineKeyboardButton("🔗 REFERRAL", callback_data="referral")],
-        [InlineKeyboardButton("💸 WITHDRAW", callback_data="withdraw")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+# Add referral
+def add_referral(referrer_id, referred_id):
+    conn = sqlite3.connect('earn_bot.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute('INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)', (referrer_id, referred_id))
+    conn.commit()
+    conn.close()
 
+# Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    args = context.args
+    update_user(user.id, user.username)
     
-    # Referral handling
-    referred_by = None
-    if args:
-        conn = sqlite3.connect('winverse_earn.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM users WHERE referral_code=?", (args[0].upper(),))
-        ref = cursor.fetchone()
-        if ref: referred_by = ref[0]
-        conn.close()
+    # Check referral
+    if context.args:
+        try:
+            ref_id = int(context.args[0])
+            if ref_id != user.id and get_user(ref_id):
+                user_data = get_user(user.id)
+                if not user_data[5]:  # referred_by is NULL
+                    add_referral(ref_id, user.id)
+                    update_user(ref_id, referrals=get_user(ref_id)[4] + 1)
+                    update_user(user.id, referred_by=ref_id)
+                    await context.bot.send_message(ref_id, 
+                        "🎉 New referral! You earned ₹10\nBalance updated!")
+        except:
+            pass
     
-    create_user(user.user_id, user.username, user.first_name, referred_by)
+    keyboard = [
+        [InlineKeyboardButton("💰 Balance", callback_data="balance")],
+        [InlineKeyboardButton("📋 Tasks (₹2)", callback_data="tasks")],
+        [InlineKeyboardButton("👥 Refer & Earn (₹10)", callback_data="refer")],
+        [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    user_data = get_user(user.user_id)
-    ref_link = f"t.me/winverse_earn_bot?start={user_data[3]}" if user_data else ""
-    
-    text = f"""{'='*40}
-🚀 **WINVERSE EARN APP** 🚀
-{'='*40}
+    await update.message.reply_text(
+        f"🌟 Welcome to *Winverse Earn Bot*!\n\n"
+        f"👋 Hi {user.first_name}!\n"
+        f"Earn real money by completing tasks and referring friends!\n\n"
+        f"💎 Features:\n"
+        f"• Tasks: ₹2 each (one-time)\n"
+        f"• Referrals: ₹10 unlimited\n"
+        f"• Min withdraw: ₹20\n\n"
+        f"🚀 Start earning now!",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
 
-👋 **Welcome {user.first_name}!**
-
-💎 **JOIN BONUS**: +₹10 ✅
-🔗 **Ref Code**: `{user_data[3] if user_data else 'N/A'}`
-📱 **Share**: {ref_link}
-
-{'='*40}
-🎮 **MAIN MENU** 🎮
-{'='*40}"""
-    
-    await update.message.reply_text(text, reply_markup=main_menu(), parse_mode='Markdown')
-
-# Button Handler - APP LIKE UI
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Button handler
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    uid = query.from_user.id
     
-    if query.data == "tasks":
-        task = get_active_task()
-        if task:
-            kb = [[InlineKeyboardButton("✅ COMPLETE TASK (+₹2)", callback_data=f"complete_{task[0]}")],
-                  [InlineKeyboardButton("🏠 HOME", callback_data="home")]]
-            text = f"""📱 **TASK PANEL**
-
-🎯 **Task #{task[0]}**
-{task[1]}
-
-💰 **Reward**: ₹{task[2]}
-⏰ **Status**: Available
-
-👆 **Tap Complete Button!**"""
+    user_data = get_user(query.from_user.id)
+    balance = user_data[2] if user_data else 0
+    tasks_done = user_data[3] if user_data else 0
+    
+    if query.data == "balance":
+        keyboard = [[InlineKeyboardButton("🔙 Main Menu", callback_data="main")]]
+        await query.edit_message_text(
+            f"💰 *Your Balance*\n\n"
+            f"💵 Current Balance: *₹{balance:.2f}*\n"
+            f"📊 Tasks Completed: {tasks_done}\n"
+            f"👥 Your Referrals: {user_data[4] if user_data else 0}\n\n"
+            f"💸 *Minimum withdrawal: ₹20*",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+    
+    elif query.data == "tasks":
+        if tasks_done >= 1:
+            await query.edit_message_text(
+                "✅ *Task already completed!*\n\n"
+                "You can only complete this task once.\n"
+                f"💰 Earn more by referring friends (₹10 each)!",
+                parse_mode='Markdown'
+            )
         else:
-            kb = [[InlineKeyboardButton("🔄 REFRESH", callback_data="tasks")],
-                  [InlineKeyboardButton("➕ REQUEST NEW", callback_data="home")]]
-            text = "📭 **No Active Tasks**\n\n⏳ Admin new task add kar raha hai!"
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+            update_user(query.from_user.id, tasks_done=1, balance=balance + 2)
+            await query.edit_message_text(
+                "🎉 *Task Completed!*\n\n"
+                f"✅ You earned *₹2*\n"
+                f"💰 New Balance: *₹{balance + 2:.2f}*\n\n"
+                f"👥 Share with friends to earn ₹10 per referral!",
+                parse_mode='Markdown'
+            )
     
-    elif query.data == "balance":
-        user = get_user(uid)
-        text = f"""💳 **BALANCE DASHBOARD**
-
-{'='*25}
-💰 **Available**: ₹{user[5]:.2f}
-⭐ **Total Earned**: ₹{user[6]:.2f}
-🎁 **Signup Bonus**: ₹10 ✅
-
-{'='*25}
-⚡ **Quick Actions:**
-"""
-        kb = [[InlineKeyboardButton("📋 TASKS", callback_data="tasks")],
-              [InlineKeyboardButton("🔗 REFERRAL", callback_data="referral")],
-              [InlineKeyboardButton("💸 WITHDRAW", callback_data="withdraw")],
-              [InlineKeyboardButton("🏠 HOME", callback_data="home")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    
-    elif query.data == "referral":
-        user = get_user(uid)
-        text = f"""🔗 **REFERRAL CENTER**
-
-💰 **Per Referral**: ₹10
-∞ **Unlimited Referrals**
-
-{'='*25}
-📱 **Your Link:**
-`t.me/winverse_earn_bot?start={user[3]}`
-
-🎯 **Ref Code**: `{user[3]}`
-
-👥 **Share anywhere & Earn!**
-"""
-        kb = [[InlineKeyboardButton("📋 TASKS", callback_data="tasks")],
-              [InlineKeyboardButton("💰 BALANCE", callback_data="balance")],
-              [InlineKeyboardButton("🏠 HOME", callback_data="home")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    elif query.data == "refer":
+        ref_link = f"https://t.me/winverse_earn_bot?start={query.from_user.id}"
+        keyboard = [[InlineKeyboardButton("🔙 Main Menu", callback_data="main")]]
+        await query.edit_message_text(
+            f"👥 *Referral Program*\n\n"
+            f"💰 Earn *₹10* for each friend you refer!\n"
+            f"📈 *Unlimited referrals*\n\n"
+            f"🔗 *Your Referral Link:*\n"
+            f"`{ref_link}`\n\n"
+            f"📋 Share this link with friends!\n"
+            f"💎 They get started, you get ₹10 instantly!",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
     
     elif query.data == "withdraw":
-        user = get_user(uid)
-        if user[5] >= 20:
-            text = f"""💸 **WITHDRAWAL PANEL**
-
-💰 **Current Balance**: ₹{user[5]:.2f}
-💳 **Min Amount**: ₹20
-⚡ **Processing Fee**: ₹2
-
-{'='*25}
-📱 **Enter UPI ID & Amount:**
-
-*Format:* `UPI | Amount`
-*Example:* `9123456789@paytm | 25`
-"""
-            await query.edit_message_text(text, parse_mode='Markdown')
-            context.user_data['await_withdraw'] = uid
+        if balance < 20:
+            keyboard = [[InlineKeyboardButton("🔙 Main Menu", callback_data="main")]]
+            await query.edit_message_text(
+                f"❌ *Insufficient Balance*\n\n"
+                f"💰 Current Balance: *₹{balance:.2f}*\n"
+                f"📏 Minimum withdrawal: *₹20*\n\n"
+                f"💎 Complete tasks & referrals to reach withdrawal limit!",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
         else:
-            await query.answer("❌ Minimum ₹20 balance required!", show_alert=True)
+            keyboard = [[InlineKeyboardButton("✅ Request Withdraw", callback_data="confirm_withdraw")]]
+            await query.edit_message_text(
+                f"💸 *Withdrawal Request*\n\n"
+                f"💰 Available Balance: *₹{balance:.2f}*\n"
+                f"💳 Withdrawal Charge: ₹2\n"
+                f"📥 *Send your UPI ID* in next message\n\n"
+                f"⚠️ Admin will approve within 24hrs",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            context.user_data['awaiting_withdraw'] = True
     
-    elif query.data == "home":
-        await query.edit_message_text("🏠 **Winverse Earn App**\n\nChoose from main menu:", reply_markup=main_menu(), parse_mode='Markdown')
+    elif query.data == "confirm_withdraw":
+        keyboard = [[InlineKeyboardButton("🔙 Main Menu", callback_data="main")]]
+        await query.edit_message_text(
+            "💳 *Send your UPI ID*\n\n"
+            "Example: `yourname@paytm` or `9123456789@upi`\n\n"
+            "⚠️ Make sure UPI is correct!\n"
+            "Admin will send payment within 24hrs after approval.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        context.user_data['awaiting_upi'] = True
     
-    elif query.data.startswith("complete_"):
-        task_id = int(query.data.split("_")[1])
-        task = get_active_task()
-        
-        if task and task[0] == task_id:
-            if complete_task(uid, task_id):
-                user = get_user(uid)
-                text = f"""🎉 **TASK COMPLETED!**
+    elif query.data == "main":
+        keyboard = [
+            [InlineKeyboardButton("💰 Balance", callback_data="balance")],
+            [InlineKeyboardButton("📋 Tasks (₹2)", callback_data="tasks")],
+            [InlineKeyboardButton("👥 Refer & Earn (₹10)", callback_data="refer")],
+            [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")]
+        ]
+        await query.edit_message_text(
+            f"🌟 *Winverse Earn Bot*\n\n"
+            f"👋 Hi {query.from_user.first_name}!\n"
+            f"💰 Balance: *₹{balance:.2f}*\n\n"
+            f"🚀 Choose an option below:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
 
-✅ **Task #{task_id}** - Done!
-💰 **Reward Earned**: +₹{task[2]}
-💳 **New Balance**: ₹{user[5]:.2f}
-
-⭐ **Perfect! Keep Earning!**
-"""
-                kb = [[InlineKeyboardButton("📋 NEW TASK", callback_data="tasks")],
-                      [InlineKeyboardButton("💰 BALANCE", callback_data="balance")],
-                      [InlineKeyboardButton("🏠 HOME", callback_data="home")]]
-            else:
-                text = "❌ This task already completed by you!"
-                kb = [[InlineKeyboardButton("🔄 NEW TASKS", callback_data="tasks")]]
-        else:
-            text = "❌ Task expired! Check new tasks."
-            kb = [[InlineKeyboardButton("📋 TASKS", callback_data="tasks")]]
+# Handle UPI messages
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('awaiting_upi'):
+        user_data = get_user(update.effective_user.id)
+        balance = user_data[2]
+        upi = update.message.text.strip()
         
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-
-# Withdraw Request Handler
-async def withdraw_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get('await_withdraw'):
-        return
-    
-    uid = context.user_data['await_withdraw']
-    if update.effective_user.id != uid:
-        return
-    
-    try:
-        parts = update.message.text.split('|')
-        upi = parts[0].strip()
-        withdraw_amount = float(parts[1].strip())
+        # Deduct balance (₹2 charge)
+        final_amount = balance - 2
+        update_user(update.effective_user.id, balance=final_amount, withdraw_requests=user_data[6] + 1)
         
-        user = get_user(uid)
-        if withdraw_amount > user[5] or withdraw_amount < 20:
-            await update.message.reply_text("❌ Invalid amount! Min ₹20 & balance check karo.")
-            return
-        
-        charge = 2
-        final_amount = withdraw_amount - charge
-        
-        conn = sqlite3.connect('winverse_earn.db')
-        cursor = conn.cursor()
-        cursor.execute("""INSERT INTO withdrawals 
-                         (user_id, amount, charge, final_amount, upi_id) 
-                         VALUES(?,?,?,?,?)""", (uid, withdraw_amount, charge, final_amount, upi))
-        
-        # Deduct balance
-        cursor.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (withdraw_amount, uid))
+        # Save withdraw request
+        conn = sqlite3.connect('earn_bot.db', check_same_thread=False)
+        c = conn.cursor()
+        c.execute('INSERT INTO withdraws (user_id, amount, upi) VALUES (?, ?, ?)', 
+                 (update.effective_user.id, final_amount, upi))
         conn.commit()
         conn.close()
         
-        await update.message.reply_text(f"""✅ **Withdraw Request Created!**
-
-💰 **Amount**: ₹{withdraw_amount}
-💸 **Charge**: ₹2
-💵 **Final**: ₹{final_amount}
-📱 **UPI**: `{upi}`
-
-⏳ **Status**: Pending
-🔔 Admin ko notification chala gaya!
-
-*Payment 24hr me milega*""", parse_mode='Markdown')
+        # Notify admin
+        admin_msg = (
+            f"💸 *New Withdrawal Request*\n\n"
+            f"👤 User: {update.effective_user.first_name} (@{update.effective_user.username})\n"
+            f"🆔 ID: `{update.effective_user.id}`\n"
+            f"💰 Amount: *₹{final_amount:.2f}*\n"
+            f"💳 UPI: `{upi}`\n"
+            f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
+        try:
+            await context.bot.send_message(ADMIN_ID, admin_msg, parse_mode='Markdown')
+        except:
+            pass
         
-        # ADMIN NOTIFICATION
-        await context.bot.send_message(ADMIN_ID, f"""🚨 **NEW WITHDRAW REQUEST #{cursor.lastrowid}**
+        await update.message.reply_text(
+            f"✅ *Withdrawal Requested!*\n\n"
+            f"💰 Amount: *₹{final_amount:.2f}*\n"
+            f"💳 UPI: `{upi}`\n"
+            f"📋 Status: *Pending Approval*\n\n"
+            f"⏳ Admin will process within 24hrs\n"
+            f"💎 Check back later!",
+            parse_mode='Markdown'
+        )
+        context.user_data.clear()
 
-👤 **User**: {user[2]} (ID: {uid})
-💰 **Amount**: ₹{withdraw_amount}
-💵 **Pay**: ₹{final_amount}
-📱 **UPI**: `{upi}`
-
-**Approve Command:**
-`/approve {cursor.lastrowid}`""", parse_mode='Markdown')
-        
-        context.user_data['await_withdraw'] = None
-        
-    except:
-        await update.message.reply_text("❌ Wrong format!\n`UPI | Amount`\nExample: `9123456789@paytm | 25`")
-
-# ADMIN PANEL
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    
-    kb = [[InlineKeyboardButton("➕ ADD TASK", callback_data="admin_add")],
-          [InlineKeyboardButton("💰 WITHDRAWALS", callback_data="admin_wd")],
-          [InlineKeyboardButton("📊 STATS", callback_data="admin_stats")],
-          [InlineKeyboardButton("👥 USERS", callback_data="admin_users")]]
-    
-    await update.message.reply_text("🔧 **WINVERSE ADMIN DASHBOARD**", reply_markup=InlineKeyboardMarkup(kb))
-
-async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query.from_user.id != ADMIN_ID: return
-    await query.answer()
-    
-    if query.data == "admin_add":
-        await query.edit_message_text("📝 **ADD NEW TASK** (₹2 default)\n\n`Task Text | Reward`\n*Ex:* `Daily Check-in | 2`", parse_mode='Markdown')
-        context.user_data['admin_add_task'] = True
-    
-    elif query.data == "admin_wd":
-        conn = sqlite3.connect('winverse_earn.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT id,user_id,final_amount,upi_id FROM withdrawals WHERE status='pending'")
-        wds = cursor.fetchall()
-        conn.close()
-        
-        if wds:
-            text = "💸 **PENDING WITHDRAWS**:\n\n"
-            for wd in wds:
-                text += f"🆔 `{wd[0]}` | ₹{wd[2]} | {wd[3]}\n"
-            text += "\nApprove: `/approve ID`"
-        else:
-            text = "✅ No pending withdrawals!"
-        await query.edit_message_text(text, parse_mode='Markdown')
-    
-    elif query.data == "admin_stats":
-        conn = sqlite3.connect('winverse_earn.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*),SUM(balance),SUM(total_earned) FROM users")
-        stats = cursor.fetchone()
-        cursor.execute("SELECT COUNT(*) FROM tasks WHERE is_active=1")
-        tasks = cursor.fetchone()[0]
-        conn.close()
-        
-        text = f"""📊 **ADMIN STATS**
-👥 Users: {stats[0]}
-💰 Total Balance: ₹{stats[1]:.2f}
-⭐ Total Earned: ₹{stats[2]:.2f}
-📋 Active Tasks: {tasks}"""
-        await query.edit_message_text(text, parse_mode='Markdown')
-
-async def admin_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID or not context.user_data.get('admin_add_task'):
+# Admin panel
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
     
-    try:
-        parts = update.message.text.split('|')
-        task_text = parts[0].strip()
-        reward = float(parts[1].strip()) if len(parts) > 1 else 2.0
-        
-        conn = sqlite3.connect('winverse_earn.db')
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO tasks(task_text,reward,is_active) VALUES(?,?,1)", (task_text, reward))
-        conn.commit()
-        conn.close()
-        
-        await update.message.reply_text(f"✅ **TASK ADDED #{cursor.lastrowid}**\n\n📝 {task_text}\n💰 ₹{reward}\n\nUsers ko dikhne lagega!")
-        context.user_data['admin_add_task'] = False
-    except:
-        await update.message.reply_text("❌ Format: `Task | Reward`\nDefault reward ₹2")
-
-async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
+    conn = sqlite3.connect('earn_bot.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM users')
+    total_users = c.fetchone()[0]
+    c.execute('SELECT SUM(balance) FROM users')
+    total_balance = c.fetchone()[0] or 0
+    c.execute('SELECT * FROM withdraws WHERE status = "pending" ORDER BY created_at DESC LIMIT 5')
+    pending_withdraws = c.fetchall()
+    conn.close()
     
-    try:
-        wid = int(context.args[0])
-        conn = sqlite3.connect('winverse_earn.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM withdrawals WHERE id=? AND status='pending'", (wid,))
-        result = cursor.fetchone()
-        
-        if result:
-            cursor.execute("UPDATE withdrawals SET status='approved' WHERE id=?", (wid,))
-            conn.commit()
-            await context.bot.send_message(result[0], "✅ **PAYMENT APPROVED!**\n💰 Money sent to your UPI!\n\nThank you! 🎉")
-            await update.message.reply_text(f"✅ **Withdraw #{wid} APPROVED**\nUser notified!")
-        else:
-            await update.message.reply_text("❌ Invalid withdraw ID!")
-        conn.close()
-    except:
-        await update.message.reply_text("❌ `/approve ID` - Example: `/approve 1`")
+    withdraw_text = ""
+    for withdraw in pending_withdraws:
+        withdraw_text += f"🆔 {withdraw[1]} | ₹{withdraw[2]:.2f} | {withdraw[3]}\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("📊 Stats", callback_data="admin_stats")],
+        [InlineKeyboardButton("💸 Pending Withdraws", callback_data="admin_withdraws")],
+        [InlineKeyboardButton("👥 Users", callback_data="admin_users")]
+    ]
+    
+    await update.message.reply_text(
+        f"👨‍💼 *Admin Panel*\n\n"
+        f"📊 *Stats:*\n"
+        f"👥 Total Users: *{total_users}*\n"
+        f"💰 Total Balance: *₹{total_balance:.2f}*\n\n"
+        f"⏳ *Pending Withdrawals (Top 5):*\n{withdraw_text}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
 
 def main():
     init_db()
-    print("🚀 WINVERSE EARN BOT v2.0 - Starting...")
-    
     app = Application.builder().token(BOT_TOKEN).build()
     
-    # Handlers
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(CommandHandler("approve", approve_cmd))
+    app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(CallbackQueryHandler(admin_buttons, pattern="^admin_"))
-    
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_request))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_task))
-    
-    print("✅ BOT LIVE! t.me/winverse_earn_bot")
-    print("🔧 Admin: /admin")
+    print("🤖 Winverse Earn Bot started!")
     app.run_polling()
 
 if __name__ == '__main__':
